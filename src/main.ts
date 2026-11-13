@@ -31,13 +31,16 @@ function setHTML(selector:string,html:string) {
   if(data)Array.from(el.querySelectorAll('button')).find(b=>JSON.stringify(b.dataset)===data)?.focus({preventScroll:true});
 }
 const $=<T extends HTMLElement=HTMLElement>(q:string)=>document.querySelector<T>(q)!;
+function timingOrder() {
+  return order(race).sort((a,b)=>(a.finishedAt??Infinity)-(b.finishedAt??Infinity)||b.shownDistance-a.shownDistance||a.id-b.id);
+}
 function carPanel(car:Car,num:number) {
-  const pos=order(race).findIndex(c=>c.id===car.id)+1;const tyre=TYRES[car.compound];
+  const pos=timingOrder().findIndex(c=>c.id===car.id)+1;const tyre=TYRES[car.compound];
   return `<article class="panel car-panel ${selected===num?'selected':''}"><div class="driver-heading"><span class="driver-number">0${num}</span><div><span class="eyebrow">${num===1?'THE VETERAN':'THE HOTSHOT'}</span><h2>${car.name}</h2></div><strong class="position">P${pos}</strong></div><div class="tyre-line"><span class="compound" style="--tyre:${tyre.color}">${car.compound[0].toUpperCase()}</span><span>${car.compound.toUpperCase()} <small>${Math.floor(car.age)} laps old</small></span><div class="tyre-health"><strong>${Math.max(0,Math.round((1-car.wear)*100))}%</strong><small>TYRE LIFE</small></div></div><div class="wear-track"><div style="width:${Math.max(0,(1-car.wear)*100)}%;background:${car.wear>0.78?'#ed6d73':tyre.color}"></div><i></i></div><div class="car-stats"><div><span>LAST LAP</span><strong>${formatTime(car.lastLap)}</strong></div><div><span>PACE MODE</span><strong>${car.mode}</strong></div><div><span>STOPS</span><strong>${car.stops}</strong></div></div><div class="car-actions"><button data-car="${num}" data-action="pit" class="box-button" ${car.finishedAt!==null?'disabled':''}>${car.pitRemaining?'IN PIT LANE':car.pitOrder?'BOX · '+car.pitOrder.toUpperCase():'BOX THIS LAP'}</button><button data-car="${num}" data-action="stay">Stay out</button><button data-car="${num}" data-action="${car.mode==='push'?'conserve':'push'}">${car.mode==='push'?'Conserve':'Push'} ↗</button></div></article>`;
 }
 function render() {
-  const sorted=order(race);const leader=sorted[0];
-  $('#lap').textContent=String(Math.min(TOTAL_LAPS,Math.floor(leader.distance)+1));
+  const sorted=timingOrder();const leader=sorted[0];
+  $('#lap').textContent=String(Math.min(TOTAL_LAPS,Math.floor(order(race)[0].distance)+1));
   $('#flag').className='flag '+(race.flag==='safety'?'yellow':'');
   $('#flag').textContent=race.status==='finished'?'⚑ CHEQUERED FLAG':race.status==='paused'?'Ⅱ SESSION PAUSED':race.status==='ready'?'● READY TO RACE':race.flag==='safety'?'● SAFETY CAR':'● GREEN FLAG';
   $('#play').textContent=race.status==='running'?'Ⅱ':'▶';$('#play').setAttribute('aria-label',race.status==='running'?'Pause race':'Resume race');
