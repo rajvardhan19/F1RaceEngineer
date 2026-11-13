@@ -6,7 +6,9 @@ export function layoutMarkers(cars:Car[],pointAt:(fraction:number)=>MapPoint):Ma
   const placed:Marker[]=[];
   // Stable car order prevents identity swapping. Displaced dots retain a tether to true position.
   for(const car of [...cars].sort((a,b)=>a.id-b.id)) {
-    const anchor=pointAt(((car.distance%1)+1)%1);let point={...anchor};
+    const raw=pointAt(((car.distance%1)+1)%1);
+    // SVG returns DOMPoint with non-enumerable x/y; spreading it loses coordinates.
+    const anchor={x:raw.x,y:raw.y};let point={...anchor};
     for(let attempt=0;attempt<80;attempt++){
       if(!placed.some(other=>Math.hypot(other.point.x-point.x,other.point.y-point.y)<20))break;
       const angle=attempt*2.399963229728653, radius=12+Math.floor(attempt/6)*9;

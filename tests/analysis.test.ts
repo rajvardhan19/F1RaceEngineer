@@ -59,3 +59,9 @@ test('bundled speech check contains actual audio rather than an empty WAV header
   const wav=readFileSync(new URL('../public/audio/radio-check.wav',import.meta.url));
   const data=wav.indexOf(Buffer.from('data'));assert(data>0);assert(wav.readUInt32LE(data+4)>16000);
 });
+test('SVG DOMPoint-style non-enumerable coordinates remain visible on the map',()=>{
+  const point=Object.create({get x(){return 200;},get y(){return 140;}});
+  const markers=layoutMarkers(createRace().cars,()=>point);
+  assert(markers.every(m=>Number.isFinite(m.point.x)&&Number.isFinite(m.point.y)));
+  assert.deepEqual(markers[0].point,{x:200,y:140});
+});
