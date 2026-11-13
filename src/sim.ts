@@ -156,8 +156,8 @@ function updateTeamRadio(r:Race) {
   const once=(key:string,speaker:string,text:string,kind:Radio['kind']='info')=>{
     if(r.radioMemory.includes(key))return;r.radioMemory.push(key);message(r,speaker,text,kind);
   };
-  if(r.elapsed===12)message(r,'LAU','Radio check. Balance is okay. The fronts are starting to slide through turn three.','driver');
-  if(r.elapsed===34)message(r,'REY','I can see Keller. If we get the strategy right, we can take him.','driver');
+  if(r.elapsed===12){const c=playerCar(r,1)!;message(r,'LAU',c.pitRemaining?'On the limiter. Ready when the crew is.':c.wear>.7?'Radio check. The fronts are starting to slide through turn three.':'Radio check. Balance is okay. I’m watching the tyres.','driver');}
+  if(r.elapsed===34){const c=playerCar(r,2)!;message(r,'REY',c.pitRemaining?'Still on the limiter. I’m ready to get back in this fight.':'Radio check. Let’s get the strategy right. I want to fight for this.','driver');}
   if(r.elapsed===271)message(r,'STRATEGIST','This is our window. Stops cost less under the safety car. Watch the double stack.','warning');
   if(r.elapsed===405)message(r,'RACE CONTROL','Safety car in this lap. Prepare for the restart.','warning');
   if(r.elapsed===421)message(r,'REY','Green, green. Tyres are ready. Let me attack.','driver');
