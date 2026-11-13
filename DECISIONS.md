@@ -26,3 +26,8 @@
 - Evaluate 441 one-stop compound/lap pairs in a worker, plus the default, actual run, and valid per-call shifts. Rank by objectives, then points, then total finish time. Explicitly label search coverage and hindsight limits.
 - Shift calls by one lap of the driver's original distance/time trace, not a fixed number of seconds. Preserve other call times and disclose reordered/conflicting commands and unavailable shifts.
 - Key random noise to car/tick and stop variation to car/stop number so counterfactuals share stochastic conditions instead of consuming a shuffled global random stream.
+
+## Local neural radio
+- User explicitly chose free local neural voices over paid hosted TTS. Replace system speech synthesis with Kokoro q8 on WASM; no keys or per-call charges. Download only after opting into headset audio or a voice preview.
+- Use stable character casting, modest pace differences, real audio filtering and compression, bounded priority queues, PCM caching, and generation tokens to discard interrupted calls. Never silently fall back to robotic system voices.
+- Provide voice previews and visible loading/error states. Hold-Space capture cancels if released before microphone readiness, and loses capture on window blur.
