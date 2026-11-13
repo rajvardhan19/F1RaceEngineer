@@ -72,3 +72,15 @@ test('timing snapshots remain coherent between sector updates',()=>{
   while(r.elapsed<31)step(r);assert.notDeepEqual(r.cars.map(c=>c.shownDistance),initial);
   const sorted=order(r);assert(sorted[0].shownDistance>sorted[1].shownDistance);
 });
+test('safety-car catch-up closes large gaps without on-track overtaking',()=>{
+  const r=createRace();r.status='running';r.elapsed=280;r.flag='safety';
+  for(const c of r.cars){c.wear=0;c.age=0;c.pitOrder=null;}
+  const sorted=order(r);const first=sorted[0],last=sorted.at(-1)!;const gap=first.distance-last.distance;
+  for(let i=0;i<60;i++)step(r);
+  assert(first.distance-last.distance<gap);assert.deepEqual(order(r).map(c=>c.id),sorted.map(c=>c.id));
+});
+test('team radio reacts to actual tyre state and does not repeat a cliff warning each tick',()=>{
+  const r=createRace();r.status='running';const car=playerCar(r,1)!;car.wear=.8;
+  for(let i=0;i<31;i++)step(r);
+  assert.equal(r.messages.filter(m=>m.text.startsWith('LAU is reaching the tyre cliff')).length,1);
+});

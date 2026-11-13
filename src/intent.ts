@@ -1,7 +1,9 @@
 import type { Command, Compound } from './sim.ts';
 export type Intent = {kind:'command';command:Command} | {kind:'question';topic:'tyres'|'gaps'|'weather'|'strategy';car:number} | {kind:'clarify';text:string};
 export function parseIntent(input: string, recentCar?: number): Intent {
-  const text=input.toLowerCase().replace(/[’']s\b/g,'').replace(/[’']/g,'').replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+  const text=input.toLowerCase().replace(/[’']s\b/g,'').replace(/[’']/g,'').replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim()
+    .replace(/\b(?:car|card) (?:ii|two|too|2)\b/g,'car two')
+    .replace(/\b(?:car|card) (?:i|one|1)\b/g,'car one');
   const one=/\b(car (one|1)|theo|laurent)\b/.test(text), two=/\b(car (two|2)|nico|reyes)\b/.test(text);
   if(one&&two) return {kind:'clarify',text:'One car at a time. Do you mean car one or car two?'};
   const car=one?1:two?2:recentCar;
