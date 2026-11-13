@@ -31,3 +31,13 @@
 - User explicitly chose free local neural voices over paid hosted TTS. Replace system speech synthesis with Kokoro q8 on WASM; no keys or per-call charges. Download only after opting into headset audio or a voice preview.
 - Use stable character casting, modest pace differences, real audio filtering and compression, bounded priority queues, PCM caching, and generation tokens to discard interrupted calls. Never silently fall back to robotic system voices.
 - Provide voice previews and visible loading/error states. Hold-Space capture cancels if released before microphone readiness, and loses capture on window blur.
+
+## 2026-11-13 — Conversational pit wall
+
+- The radio felt like a stream of status updates: drivers asked questions nobody could answer, repeated themselves, and stayed silent through the race's big moments. Moved all radio prose out of the simulation into a conversation layer; the simulation now emits structured events only. Race outcomes are unchanged (verified identical finishing times against the previous build).
+- Questions to the player are first-class: deadline, quick replies, yes/no parsing, in-character timeouts that never issue commands. Questions return the race to 1×.
+- Keep “car one and car two box” as a clarification (earlier decision); double stacks need explicit words (“box both”, “double stack”).
+- Negation binds only to the order that follows it (“not now, box next lap” boxes). “Can you box?” is an order, not a question.
+- Added a `swap` team-order command to the simulation, recorded and replayable like other calls.
+- Radio staleness is measured in race time, so 15×/60× never voice outdated gaps. Synthesis is prefetched and cancellable.
+- User chose an in-browser model for open conversation. Evaluated Qwen2.5-0.5B, SmolLM2-360M, Qwen3-0.6B and Gemma-3-1B on the real prompt. Model-proposed commands were wrong on 4 of 10 test phrases for Qwen2.5-0.5B and 9 of 10 for SmolLM2, so the model is chat-only. In the browser, Qwen2.5-0.5B looped at q4f16 (half-precision overflow) and drifted off persona at q4 (“time for some rest”); on CPU it took ~10 s per reply. Llama-3.2-1B q4f16 on WebGPU stayed in persona and referenced the facts, at ~1–1.5 s per reply, so it is the team chat model. WebGPU only: a slow, weak reply hurts immersion more than the scripted answer it would replace. Ungrounded numbers are filtered; greedy decoding, no repetition penalty (it pushed the model away from the fact sheet).

@@ -13,11 +13,15 @@ function load(){
   }).catch(e=>{model=null;throw e;});
   return model;
 }
-// Serial inference avoids overlapping WASM runs. The UI owns cancellation/expiry.
+// Serial inference avoids overlapping WASM runs. Jobs the UI cancelled while queued are skipped,
+// so a reply to the player never waits behind stale lines.
 let chain=Promise.resolve();
-self.onmessage=(event:MessageEvent<{id:number;type:'load'|'speak';text:string;speaker:string}>)=>{
-  const {id,type,text,speaker}=event.data;
+const cancelled=new Set<number>();
+self.onmessage=(event:MessageEvent<{id:number;type:'load'|'speak'|'cancel';text:string;speaker:string;ids?:number[]}>)=>{
+  const {id,type,text,speaker,ids}=event.data;
+  if(type==='cancel'){for(const x of ids??[])cancelled.add(x);return;}
   chain=chain.then(async()=>{
+    if(cancelled.delete(id))return;
     try{
       const tts=await load();
       if(type==='load'){self.postMessage({id,type:'ready'});return;}

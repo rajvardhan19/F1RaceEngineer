@@ -61,7 +61,7 @@ test('parser recognises natural calls and keeps car context',()=>{
   assert.deepEqual(parseIntent('Nico, do not pit'),{kind:'command',command:{car:2,action:'stay'}});
 });
 test('parser asks for missing, conflicting cars and multiple actions',()=>{
-  for(const text of ['box','car one and car two box','car one push and conserve','car one box for soft or hard'])assert.equal(parseIntent(text).kind,'clarify');
+  for(const text of ['box','car one and car two box','car one push and conserve','car one box for soft or hard','Theo box Nico stay out'])assert.equal(parseIntent(text).kind,'clarify');
 });
 test('questions do not accidentally issue race commands',()=>{
   for(const text of ['Should car one box?','How are car two’s tyres?','What is the gap for Theo?','What is the weather?'])assert.equal(parseIntent(text).kind,'question');
@@ -79,8 +79,26 @@ test('safety-car catch-up closes large gaps without on-track overtaking',()=>{
   for(let i=0;i<60;i++)step(r);
   assert(first.distance-last.distance<gap);assert.deepEqual(order(r).map(c=>c.id),sorted.map(c=>c.id));
 });
-test('team radio reacts to actual tyre state and does not repeat a cliff warning each tick',()=>{
-  const r=createRace();r.status='running';const car=playerCar(r,1)!;car.wear=.8;
-  for(let i=0;i<31;i++)step(r);
-  assert.equal(r.messages.filter(m=>m.text.startsWith('LAU is reaching the tyre cliff')).length,1);
+test('simulation records structured events instead of radio prose',()=>{
+  const r=replay(2049,[{at:272,command:{car:1,action:'pit',compound:'hard'}}]);
+  const types=r.events.map(e=>e.type);
+  assert.deepEqual(types.filter(t=>t==='safety'||t==='safety-ending'||t==='green'),['safety','safety-ending','green']);
+  const pit=r.events.find(e=>e.type==='pit'&&e.car===1);assert(pit&&pit.type==='pit'&&pit.compound==='hard');
+  assert(r.events.some(e=>e.type==='pit-exit'&&e.car===1));
+  const finishes=r.events.filter(e=>e.type==='finish');assert.equal(finishes.length,10);
+  assert.deepEqual(finishes.map(e=>e.type==='finish'?e.position:0).sort((a,b)=>a-b),[1,2,3,4,5,6,7,8,9,10]);
+  assert.equal(Object.hasOwn(r,'messages'),false);
+});
+test('team order is refused unless the teammate is right behind',()=>{
+  const r=createRace();r.status='running';
+  assert.equal(applyCommand(r,{car:1,action:'swap'}),'no-swap');assert.equal(r.decisions.length,0);
+});
+test('team order lets the faster teammate through and then clears',()=>{
+  const r=createRace();r.status='running';
+  const theo=playerCar(r,1)!,nico=playerCar(r,2)!;
+  for(const c of r.cars)if(!c.player)c.distance=27+c.id*0.1;
+  Object.assign(theo,{distance:25,compound:'medium',wear:.4});Object.assign(nico,{distance:24.995,compound:'medium',wear:.2});
+  assert.equal(applyCommand(r,{car:1,action:'swap'}),'ok');assert.equal(theo.yieldTo,nico.id);
+  for(let i=0;i<60&&nico.distance<=theo.distance;i++)step(r);
+  assert(nico.distance>theo.distance,'Nico should be through');step(r);assert.equal(theo.yieldTo,null);
 });

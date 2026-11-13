@@ -38,3 +38,34 @@ test('a model error is visible and a later load can retry',async()=>{
   await assert.rejects(first,/Download failed/);assert.match(statuses.at(-1)!,/Voices unavailable/);
   const second=radio.prepare();worker.reply({id:worker.requests.at(-1).id,type:'ready'});await second;assert.equal(radio.ready,true);
 });
+test('every role on the radio has its own voice',()=>{assert.equal(new Set(['LAU','REY','STRATEGIST','TYRE SPECIALIST','DATA ENGINEER','RACE CONTROL','PIT CREW'].map(s=>voiceProfile(s).voice)).size,7);});
+test('lines go stale in race time and urgent lines jump the queue',async()=>{
+  const radio=setup();let now=0;radio.clock=()=>now;const aired:string[]=[];radio.onAir=(_s,t)=>aired.push(t);
+  radio.line({text:'Old gap update.',speaker:'DATA ENGINEER',priority:1,at:0,ttl:10});
+  radio.line({text:'Safety car!',speaker:'RACE CONTROL',priority:3,at:0,ttl:30});
+  const worker=FakeWorker.last;worker.reply({id:worker.requests[0].id,type:'ready'});await flush();
+  const speak=worker.requests.filter(r=>r.type==='speak');assert.equal(speak.length,2);
+  const gap=speak.find(r=>r.text==='Old gap update.'),safety=speak.find(r=>r.text==='Safety car!');
+  worker.reply({id:gap.id,type:'audio',audio:new Float32Array(240),rate:24000});await flush();
+  assert.deepEqual(aired,[],'the urgent line is still synthesising, so nothing airs yet');
+  worker.reply({id:safety.id,type:'audio',audio:new Float32Array(240),rate:24000});await flush();
+  assert.deepEqual(aired,['Safety car!']);
+  now=20;(radio as any).source.stop();await flush();
+  assert.deepEqual(aired,['Safety car!'],'the gap update went stale in race time and never airs');
+});
+test('keying the mic cancels queued synthesis in the worker',async()=>{
+  const radio=setup();radio.say('One.','LAU');radio.say('Two.','REY');
+  const worker=FakeWorker.last;worker.reply({id:worker.requests[0].id,type:'ready'});await flush();
+  const ids=worker.requests.filter(r=>r.type==='speak').map(r=>r.id);assert.equal(ids.length,2);
+  radio.interrupt();const cancel=worker.requests.at(-1);
+  assert.equal(cancel.type,'cancel');assert.deepEqual([...cancel.ids].sort(),[...ids].sort());
+});
+test('failed synthesis is dropped and the next transmission can play',async()=>{
+  const radio=setup();let air=0;radio.onAir=()=>air++;
+  radio.say('First call.','LAU');const worker=FakeWorker.last;
+  worker.reply({id:worker.requests[0].id,type:'ready'});await flush();
+  worker.reply({id:worker.requests.at(-1).id,type:'error',error:'synthesis failed'});await flush();
+  radio.say('Second call.','REY');await flush();
+  worker.reply({id:worker.requests.at(-1).id,type:'audio',audio:new Float32Array(24000),rate:24000});await flush();
+  assert.equal(air,1);radio.interrupt();
+});

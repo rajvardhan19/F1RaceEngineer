@@ -1,21 +1,32 @@
 export type Compound = 'soft' | 'medium' | 'hard';
 export type Mode = 'push' | 'balanced' | 'conserve';
-export type Command = { car: number; action: 'pit'; compound: Compound } | { car: number; action: 'stay' | Mode };
+// 'swap' is a team order: the addressed car lets its teammate through.
+export type Command = { car: number; action: 'pit'; compound: Compound } | { car: number; action: 'stay' | Mode | 'swap' };
+export type CommandOutcome = 'ok' | 'no-car' | 'not-running' | 'finished' | 'committed' | 'bad-compound' | 'no-swap' | 'unknown';
 export interface Car {
   id: number; name: string; code: string; team: string; color: string; player: boolean;
   distance: number; pace: number; compound: Compound; age: number; wear: number; mode: Mode;
   pitOrder: Compound | null; pitRemaining: number; stops: number; lastLap: number; lapStarted: number;
   lapTimes: number[]; trust: number; finishedAt: number | null; sector: number; shownDistance: number;
+  yieldTo: number | null; yieldUntil: number;
 }
-export interface Radio { at: number; speaker: string; text: string; kind: 'info' | 'warning' | 'driver' }
+// Structured facts for the conversation layer. The simulation never writes radio prose.
+export type RaceEvent =
+  | { at: number; type: 'safety' | 'safety-ending' | 'green' }
+  | { at: number; type: 'pit'; car: number; compound: Compound; slow: number; queued: number }
+  | { at: number; type: 'pit-exit'; car: number }
+  | { at: number; type: 'finish'; car: number; position: number };
 export interface Race {
   seed: number; random: number; elapsed: number; tick: number; status: 'ready' | 'running' | 'paused' | 'finished';
-  flag: 'green' | 'safety'; cars: Car[]; messages: Radio[]; decisions: { at: number; command: Command }[];
-  safetyTriggered: boolean; safetyEnded: boolean; radioMemory: string[]; positions: Record<number, number>;
+  flag: 'green' | 'safety'; cars: Car[]; events: RaceEvent[]; decisions: { at: number; command: Command }[];
+  safetyTriggered: boolean; safetyEnded: boolean;
 }
 export const TOTAL_LAPS = 36;
 export const START_LAP = 18;
 export const SCENARIO_SEED = 2049;
+export const SAFETY_START = 270;
+export const SAFETY_ENDING = 405;
+export const SAFETY_END = 420;
 export const TYRES: Record<Compound, { life: number; pace: number; color: string }> = {
   soft: { life: 14, pace: -0.9, color: '#ed6d73' }, medium: { life: 23, pace: 0, color: '#e9ce64' }, hard: { life: 34, pace: 0.85, color: '#d9dfdf' },
 };
@@ -24,9 +35,6 @@ export function raceRandom(seed:number,car:number,event:number,channel:number) {
   let x=(seed^Math.imul(car+1,0x9e3779b1)^Math.imul(event+1,0x85ebca6b)^Math.imul(channel+1,0xc2b2ae35))>>>0;
   x=Math.imul(x^(x>>>16),0x7feb352d);x=Math.imul(x^(x>>>15),0x846ca68b);
   return ((x^(x>>>16))>>>0)/4294967296;
-}
-export function message(r: Race, speaker: string, text: string, kind: Radio['kind'] = 'info') {
-  r.messages.push({ at: r.elapsed, speaker, text, kind });
 }
 export function createRace(seed = SCENARIO_SEED): Race {
   const grid = [
@@ -45,33 +53,32 @@ export function createRace(seed = SCENARIO_SEED): Race {
     id,name,code,team,color,player,distance: START_LAP - gap/86,pace: 85.5 + (id%4)*0.24,
     compound,age,wear: age/TYRES[compound].life,mode:'balanced',pitOrder:null,pitRemaining:0,stops:0,
     lastLap:87.2 + id*0.16,lapStarted:-gap,lapTimes:[],trust:78,finishedAt:null,sector:Math.floor((START_LAP-gap/86)*3),shownDistance:START_LAP-gap/86,
+    yieldTo:null,yieldUntil:0,
   }));
-  const r: Race = {seed,random:seed>>>0,elapsed:0,tick:0,status:'ready',flag:'green',cars,messages:[],decisions:[],safetyTriggered:false,safetyEnded:false,radioMemory:[],positions:{1:2,4:5}};
-  message(r,'STRATEGIST','Eighteen laps to go. Theo is P2; Nico is P5. Protect the podium and bring both cars into the top five.');
-  message(r,'TYRE SPECIALIST','Nico’s softs are nearing the cliff. A fresh medium will reach the finish.','warning');
-  return r;
+  return {seed,random:seed>>>0,elapsed:0,tick:0,status:'ready',flag:'green',cars,events:[],decisions:[],safetyTriggered:false,safetyEnded:false};
 }
 export function order(r: Race) { return [...r.cars].sort((a,b) => (a.finishedAt ?? Infinity)-(b.finishedAt ?? Infinity) || b.distance-a.distance || a.id-b.id); }
 export function playerCar(r: Race, number: number) { return r.cars.find(c => c.player && c.id === (number===1 ? 1 : number===2 ? 4 : -1)); }
-export function applyCommand(r: Race, command: Command, record = true): string {
+/** Applies a player call. Returns 'ok' or the reason it could not be carried out; never writes radio text. */
+export function applyCommand(r: Race, command: Command, record = true): CommandOutcome {
   const car = playerCar(r,command.car);
-  if (!car) return 'Specify car one or car two.';
-  if (r.status !== 'running' && r.status !== 'paused') return 'Start the session before issuing a call.';
-  if (car.finishedAt !== null) return `${car.code} has already taken the chequered flag.`;
-  if (car.pitRemaining > 0 && (command.action==='pit' || command.action==='stay')) return `${car.code} is already committed to the pit lane.`;
-  let reply = '';
+  if (!car) return 'no-car';
+  if (r.status !== 'running' && r.status !== 'paused') return 'not-running';
+  if (car.finishedAt !== null) return 'finished';
+  if (car.pitRemaining > 0 && (command.action==='pit' || command.action==='stay' || command.action==='swap')) return 'committed';
   if (command.action==='pit') {
-    if (!Object.hasOwn(TYRES,command.compound)) return 'Unknown tyre compound.';
+    if (!Object.hasOwn(TYRES,command.compound)) return 'bad-compound';
     car.pitOrder = command.compound;
-    reply = car.id===1 ? `Understood. ${command.compound}s at the end of this lap. Make sure we have the gap.` : `Box, box. ${command.compound}s. Give me a clean stop and I’ll do the rest.`;
-  } else if (command.action==='stay') { car.pitOrder = null; reply = car.id===1 ? 'Understood. Staying out. I’ll keep the tyres alive.' : 'Staying out. Okay, but don’t leave me out here too long.'; }
-  else if (['push','balanced','conserve'].includes(command.action)) {
-    car.mode = command.action;
-    reply = command.action==='push' ? (car.id===1?'Understood. I can find a little more. Watch the fronts.':'Finally. Let’s go get them.') : command.action==='conserve' ? (car.id===1?'Copy. Short shifting, looking after the rears.':'Okay, backing off. Tell me when I can fight again.') : (car.id===1?'Copy. Back to our target pace.':'Normal pace. Understood.');
-  } else return 'Command not recognised.';
+  } else if (command.action==='stay') car.pitOrder = null;
+  else if (command.action==='push' || command.action==='balanced' || command.action==='conserve') car.mode = command.action;
+  else if (command.action==='swap') {
+    const mate = playerCar(r, command.car===1 ? 2 : 1)!;
+    const sorted = order(r), index = sorted.indexOf(car);
+    if (sorted[index+1] !== mate || mate.pitRemaining>0 || mate.finishedAt!==null || car.distance-mate.distance>0.035) return 'no-swap';
+    car.yieldTo = mate.id; car.yieldUntil = r.elapsed + 90;
+  } else return 'unknown';
   if (record) r.decisions.push({at:r.elapsed,command:{...command}});
-  message(r,car.code,reply,'driver');
-  return reply;
+  return 'ok';
 }
 export function lapPace(car: Car, r: Race) {
   const cliff = Math.max(0,car.wear-0.78);
@@ -82,19 +89,27 @@ export function lapPace(car: Car, r: Race) {
 export function step(r: Race) {
   if (r.status !== 'running') return;
   r.elapsed++; r.tick++;
-  if (r.elapsed===270) { r.flag='safety'; r.safetyTriggered=true; message(r,'RACE CONTROL','SAFETY CAR DEPLOYED. Debris at turn 9. Pit lane remains open.','warning'); }
-  if (r.elapsed===420) { r.flag='green'; r.safetyEnded=true; message(r,'RACE CONTROL','Safety car in. Green flag. Racing resumes.'); }
+  if (r.elapsed===SAFETY_START) { r.flag='safety'; r.safetyTriggered=true; r.events.push({at:r.elapsed,type:'safety'}); }
+  if (r.elapsed===SAFETY_ENDING) r.events.push({at:r.elapsed,type:'safety-ending'});
+  if (r.elapsed===SAFETY_END) { r.flag='green'; r.safetyEnded=true; r.events.push({at:r.elapsed,type:'green'}); }
   const sorted = order(r);
   const leaderSector = Math.floor(sorted[0].distance * 3);
+  const finishing: Car[] = [];
   for (let i=0;i<sorted.length;i++) {
     const car = sorted[i];
     if (car.finishedAt !== null) continue;
-    if (car.pitRemaining>0) { car.pitRemaining--; if(car.pitRemaining===0&&car.player)message(r,'PIT CREW',`${car.code}, go, go! Pit exit clear. Build the temperature in those ${car.compound}s.`,'driver'); continue; }
+    if (car.pitRemaining>0) { car.pitRemaining--; if(car.pitRemaining===0) r.events.push({at:r.elapsed,type:'pit-exit',car:car.id}); continue; }
     const previous = car.distance;
     const noise = (raceRandom(r.seed,car.id,r.tick,0)-0.5)*0.4;
     let advance = 1 / (lapPace(car,r)+noise) * (r.flag==='safety' ? (i>0 && sorted[i-1].distance-car.distance>0.025 ? 0.74 : 0.58) : 1);
+    if (car.yieldTo !== null) {
+      const mate = r.cars.find(c=>c.id===car.yieldTo)!;
+      // Team order: lift until the teammate is through, or abandon it if they drop back or stop.
+      if (mate.distance>car.distance || r.elapsed>car.yieldUntil || mate.pitRemaining>0 || mate.finishedAt!==null || car.distance-mate.distance>0.04) car.yieldTo=null;
+      else advance *= 0.93;
+    }
     const ahead=sorted[i-1];
-    if (ahead && ahead.pitRemaining===0 && ahead.finishedAt===null) {
+    if (ahead && ahead.pitRemaining===0 && ahead.finishedAt===null && ahead.yieldTo!==car.id) {
       const gap=ahead.distance-car.distance;
       if(r.flag==='safety') advance=Math.max(0,Math.min(advance,gap-0.009));
       else if(gap>0 && gap<0.016 && lapPace(car,r)>lapPace(ahead,r)-0.65) advance=Math.max(0,Math.min(advance,gap-0.006));
@@ -104,8 +119,8 @@ export function step(r: Race) {
     car.age+=advance; car.wear=Math.min(1.65,car.wear+ageDelta/TYRES[car.compound].life);
     if (Math.floor(car.distance*3)>car.sector) { car.sector=Math.floor(car.distance*3); }
     if (car.distance>=TOTAL_LAPS) {
-      car.finishedAt=r.elapsed-1+(TOTAL_LAPS-previous)/Math.max(advance,0.000001); car.distance=TOTAL_LAPS;
-      if(car.player) message(r,car.code,car.id===1?'Chequered flag. Good work on the wall today. Let’s see where we ended up.':'That’s the flag! I gave it everything. Where did we finish?','driver');
+      car.finishedAt=r.elapsed-1+(TOTAL_LAPS-previous)/Math.max(advance,0.000001); car.distance=TOTAL_LAPS;car.yieldTo=null;
+      finishing.push(car);
       continue;
     }
     if(Math.floor(car.distance)>Math.floor(previous)) {
@@ -115,23 +130,26 @@ export function step(r: Race) {
       if(!car.player && !car.pitOrder && car.wear>(r.flag==='safety' ? 0.5 : 0.89) && TOTAL_LAPS-car.distance>3) car.pitOrder='medium';
       if(car.pitOrder) {
         const slow=raceRandom(r.seed,car.id,car.stops,1)<0.09 ? 3+raceRandom(r.seed,car.id,car.stops,2)*3 : 0;
-        car.pitRemaining=Math.ceil(21+slow); car.compound=car.pitOrder; car.pitOrder=null; car.age=0;car.wear=0;car.stops++;
+        car.pitRemaining=Math.ceil(21+slow); car.compound=car.pitOrder; car.pitOrder=null; car.age=0;car.wear=0;car.stops++;car.yieldTo=null;
         // A second team car arriving before the first leaves queues behind it.
         const teammate=r.cars.find(c=>c.id!==car.id && c.team===car.team && c.pitRemaining>0);
-        if(teammate) car.pitRemaining+=Math.max(0,teammate.pitRemaining-17);
-        message(r,car.player?car.code:'RACE CONTROL',`${car.code} pits for ${car.compound}s.${slow>0?' Slow stop at the rear.':''}`,car.player?'driver':'info');
-      } else if(car.player && car.wear>0.95) message(r,car.code,'Tyres are falling away. We need to consider boxing.','warning');
+        const queued=teammate?Math.max(0,teammate.pitRemaining-17):0;
+        car.pitRemaining+=queued;
+        r.events.push({at:r.elapsed,type:'pit',car:car.id,compound:car.compound,slow,queued});
+      }
     }
   }
   // Snapshot the entire field together so stale leader and fresh follower positions cannot produce false zero gaps.
   if (Math.floor(order(r)[0].distance * 3) !== leaderSector) {
     for (const car of r.cars) car.shownDistance = car.distance;
   }
-  updateTeamRadio(r);
+  if (finishing.length) {
+    const classified = order(r);
+    for (const car of finishing) r.events.push({at:r.elapsed,type:'finish',car:car.id,position:classified.indexOf(car)+1});
+  }
   if(r.cars.every(c=>c.finishedAt!==null)) {
     r.status='finished';
     for(const c of r.cars.filter(c=>c.player)) { const pos=order(r).findIndex(x=>x.id===c.id)+1; c.trust=Math.max(30,Math.min(100,78+((c.id===1?2:5)-pos)*3)); }
-    message(r,'STRATEGIST','Session complete. The debrief is ready.');
   }
 }
 export function replay(seed: number, decisions: Race['decisions']) {
@@ -150,34 +168,5 @@ export function pitForecast(r:Race,car:Car) {
   const traffic=r.cars.filter(c=>c.id!==car.id&&c.finishedAt===null).sort((a,b)=>b.distance-a.distance);
   const position=1+traffic.filter(c=>c.distance>projected).length;
   const ahead=traffic.filter(c=>c.distance>projected).at(-1);
-  return {loss,position,ahead:ahead?.code??'clear air',gap:ahead?Math.max(0,(ahead.distance-projected)*lapPace(car,r)):0};
-}
-function updateTeamRadio(r:Race) {
-  const once=(key:string,speaker:string,text:string,kind:Radio['kind']='info')=>{
-    if(r.radioMemory.includes(key))return;r.radioMemory.push(key);message(r,speaker,text,kind);
-  };
-  if(r.elapsed===12){const c=playerCar(r,1)!;message(r,'LAU',c.pitRemaining?'On the limiter. Ready when the crew is.':c.wear>.7?'Radio check. The fronts are starting to slide through turn three.':'Radio check. Balance is okay. I’m watching the tyres.','driver');}
-  if(r.elapsed===34){const c=playerCar(r,2)!;message(r,'REY',c.pitRemaining?'Still on the limiter. I’m ready to get back in this fight.':'Radio check. Let’s get the strategy right. I want to fight for this.','driver');}
-  if(r.elapsed===271)message(r,'STRATEGIST','This is our window. Stops cost less under the safety car. Watch the double stack.','warning');
-  if(r.elapsed===405)message(r,'RACE CONTROL','Safety car in this lap. Prepare for the restart.','warning');
-  if(r.elapsed===421)message(r,'REY','Green, green. Tyres are ready. Let me attack.','driver');
-  if(r.elapsed%15!==0)return;
-  const sorted=order(r);
-  for(const car of sorted.filter(c=>c.player&&c.finishedAt===null)) {
-    const position=sorted.findIndex(c=>c.id===car.id)+1;
-    if(r.positions[car.id]!==position){
-      const previous=r.positions[car.id];r.positions[car.id]=position;
-      if(car.pitRemaining===0)message(r,'DATA ENGINEER',`${car.code}, now P${position}. ${position<previous?'Position gained.':'We’ve lost track position.'}`);
-    }
-    if(car.pitRemaining>0)continue;
-    if(car.wear>=.78&&car.wear<.95&&!car.pitOrder)once(`${car.id}-cliff-${car.stops}`,'TYRE SPECIALIST',`${car.code} is reaching the tyre cliff. ${Math.ceil(TOTAL_LAPS-car.distance)} laps remain. We need a plan.`, 'warning');
-    if(car.wear>.95)once(`${car.id}-gone-${car.stops}`,car.code,car.id===1?'Fronts are gone now. I’m losing time every corner. Recommend we box.':'These tyres are finished! I can’t fight like this. Box me.','driver');
-    const remaining=Math.ceil(TOTAL_LAPS-car.distance);
-    if(remaining<=5)once(`${car.id}-five`,'STRATEGIST',`${car.code}, five laps or fewer. ${position<=(car.id===1?3:5)?'We’re on target. Bring it home.':'We need to find a position. Decide how much tyre you can spend.'}`);
-    const ahead=sorted[position-2];
-    if(r.flag==='green'&&ahead&&r.elapsed%90===(car.id===1?0:45)) {
-      const gap=(ahead.distance-car.distance)*lapPace(car,r);
-      if(gap<2.5&&gap>0)message(r,car.code,car.id===1?`${ahead.code} is ${gap.toFixed(1)} ahead. I can put pressure on, but it will cost tyre life.`:`I’m right behind ${ahead.code}. ${gap.toFixed(1)} seconds. Can I push?`,'driver');
-    }
-  }
+  return {loss,position,ahead:ahead?.code??'clear air',aheadCar:ahead??null,gap:ahead?Math.max(0,(ahead.distance-projected)*lapPace(car,r)):0};
 }
