@@ -49,3 +49,8 @@
 - Speak long lines sentence by sentence; start loading live voices at the briefing.
 - More talk only after speech kept up: chatter is state-grounded (gap trends, personal bests, dirty air, teammate check, field update, lap picture, tyre warm-up, quiet-minute check-in), spaced by max(30, 12×speed) race seconds, never over an open question.
 - Strategy proposals are questions with recorded calls on “yes” only; nothing happens on “no” or silence. James backs off to statements after two ignored questions. Measured (simulated race, answering player): 2.0 → 3.7 voiced lines per race minute; longest silence 339 → 77 s; strategist lines 3 → 14.
+
+## Live-radio reliability
+- The user confirmed bundled opening audio works but later conversations are missing. Preserve Claude's expanded conversation and GPU voice work; fix delivery rather than add more text.
+- Synchronize simulation advancement with local radio synthesis. Hold while preparing, advance at 1× during playback, then restore the selected acceleration. This sacrifices fast-forward throughput to keep the team audible on slower devices.
+- Remove wall-clock expiry during valid rendering, limit sentence prefetch, validate every generated clip, and surface failures by pausing the race. Hosted speech remains budget-gated.

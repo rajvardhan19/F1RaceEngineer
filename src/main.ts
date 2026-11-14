@@ -14,6 +14,7 @@ import type {DebriefAnalysis,Result} from './analysis.ts';
 
 let race=createRace();let speed=1;let selected=1;let lastLine=0;let accumulator=0;let lastFrame=performance.now();
 let guided=true;let briefing=true;let debrief=false;let finishedWall=0;let comparison:DebriefAnalysis|null=null;let analysisWorker:Worker|null=null;let analysisProgress='';let inspectedDriver=1;let lastAirTime=0;let onAir=false;let thinking:BrainCall|null=null;
+const airedLines=new Set<number>();
 const voice=new RadioVoice();const sound=new PitwallSound();const brain=new TeamBrain();
 const nextTyre:Record<number,Compound>={1:'medium',2:'medium'};
 let convo=newConversation();
@@ -22,7 +23,7 @@ function newConversation(){
   c.compound=car=>nextTyre[car];
   c.brainAvailable=()=>brain.ready;
   c.speed=speed;
-  c.radioBusy=()=>voice.enabled&&voice.ready&&voice.busy;
+  c.radioBusy=()=>voice.enabled&&voice.busy;
   return c;
 }
 voice.clock=()=>race.elapsed;
@@ -58,7 +59,7 @@ function carPanel(car:Car,num:number) {
 }
 function radioLine(l:Line){
   const who=l.speaker==='YOU'?'YOU · RACE ENGINEER':l.speaker==='RADIO'?'PIT WALL':voiceProfile(l.speaker).short;
-  return `<div class="radio-message ${l.kind}"><div><strong>${esc(who)}</strong><time>${Math.floor(l.at/60)}:${(l.at%60).toString().padStart(2,'0')}</time></div><p>${esc(l.text)}</p></div>`;
+  return `<div class="radio-message ${l.kind}" data-radio-id="${l.id}" data-aired="${airedLines.has(l.id)}"><div><strong>${esc(who)}</strong><time>${Math.floor(l.at/60)}:${(l.at%60).toString().padStart(2,'0')}</time></div><p>${esc(l.text)}</p></div>`;
 }
 function render() {
   const sorted=timingOrder();const leader=sorted[0];
@@ -87,7 +88,7 @@ function render() {
   if(race.status==='finished'&&!debrief){
     // Let the drivers hear their result before the debrief covers the wall.
     finishedWall||=performance.now();
-    const settled=!convo.questions.length&&!onAir;
+    const settled=!convo.questions.length&&!voice.busy&&!onAir;
     if((settled&&performance.now()-finishedWall>2500)||performance.now()-finishedWall>20000){debrief=true;showDebrief();}
   }
 }
@@ -158,7 +159,7 @@ function beginRace(){
 }
 function showBriefing() {
   const modal=$<HTMLDialogElement>('#modal');modal.classList.remove('debrief-modal');
-  modal.innerHTML=`<div class="modal-kicker">PITWALL / SCENARIO 01</div><h2>The long game.</h2><p class="modal-intro">Barcelona. Eighteen laps left. Two drivers relying on your next call.</p><div class="brief-grid"><div><b>01 / THEO LAURENT</b><p>P2 on ageing mediums. A measured veteran with a podium to protect.</p></div><div><b>02 / NICO REYES</b><p>P5 on softs approaching the cliff. Quick, impatient, and ready to attack.</p></div></div><div class="brief-instructions"><p><b>You run the strategy.</b> Pick a compound, call a pit stop, and manage each driver’s pace. A safety car may change the equation.</p><p><b>The team talks to you.</b> Drivers ask to push or box; your strategist asks for decisions when the race turns. Answer “yes” or “no”, use the quick replies, or give your own call: “car two, box for mediums”, “Theo, let Nico through”, “how are car one’s tyres?”. The race slows to 1× when someone needs an answer.</p><p><b>Replay fairly.</b> The same seed and decisions always produce the same result. After the race, compare with a sensible default engineer, explore your calls one lap earlier or later, and see the best strategy found in a bounded search.</p></div><label class="brief-audio"><input type="checkbox" id="brief-audio" ${race.status==='ready'||voice.enabled?'checked':''}> Headset on · local neural voices, radio cues & race ambience</label><div class="scenario-note">Fictional teams · Synthetic pace data · Schematic circuit<br>Prototype: dry conditions, simplified strategy physics, no historical result claims.</div><button id="start-session" class="primary">${race.status==='ready'?'TAKE THE PIT WALL':'BACK TO THE PIT WALL'} <span>↗</span></button>`;
+  modal.innerHTML=`<div class="modal-kicker">PITWALL / SCENARIO 01</div><h2>The long game.</h2><p class="modal-intro">Barcelona. Eighteen laps left. Two drivers relying on your next call.</p><div class="brief-grid"><div><b>01 / THEO LAURENT</b><p>P2 on ageing mediums. A measured veteran with a podium to protect.</p></div><div><b>02 / NICO REYES</b><p>P5 on softs approaching the cliff. Quick, impatient, and ready to attack.</p></div></div><div class="brief-instructions"><p><b>You run the strategy.</b> Pick a compound, call a pit stop, and manage each driver’s pace. A safety car may change the equation.</p><p><b>The team talks to you.</b> Drivers ask to push or box; your strategist asks for decisions when the race turns. Answer “yes” or “no”, use the quick replies, or give your own call: “car two, box for mediums”, “Theo, let Nico through”, “how are car one’s tyres?”. The race slows to 1× when someone needs an answer. With the headset on, the clock waits while a voice is prepared and runs at 1× while the team speaks.</p><p><b>Replay fairly.</b> The same seed and decisions always produce the same result. After the race, compare with a sensible default engineer, explore your calls one lap earlier or later, and see the best strategy found in a bounded search.</p></div><label class="brief-audio"><input type="checkbox" id="brief-audio" ${race.status==='ready'||voice.enabled?'checked':''}> Headset on · local neural voices, radio cues & race ambience</label><div class="scenario-note">Fictional teams · Synthetic pace data · Schematic circuit<br>Prototype: dry conditions, simplified strategy physics, no historical result claims.</div><button id="start-session" class="primary">${race.status==='ready'?'TAKE THE PIT WALL':'BACK TO THE PIT WALL'} <span>↗</span></button>`;
   if(!modal.open)modal.showModal();
   $('#start-session').onclick=async()=>{const starting=race.status==='ready';setAudio($<HTMLInputElement>('#brief-audio').checked);if(voice.enabled&&!voice.ready){const button=$<HTMLButtonElement>('#start-session');button.disabled=true;button.textContent='CONNECTING TEAM RADIO…';try{await voice.connect();}catch{button.disabled=false;button.textContent='RETRY HEADSET · or uncheck Headset to play muted';return;}button.disabled=false;}modal.close();briefing=false;if(starting)beginRace();lastFrame=performance.now();render();};
 }
@@ -191,7 +192,7 @@ function comparisonHTML() {
   const lesson=strongest&&strongest.secondsGained!>0.1?`Moving ${strongest.car===1?'Theo’s':'Nico’s'} “${strongest.action}” call one lap ${strongest.direction} would produce P${strongest.result!.positions[strongest.car-1]}, ${strongest.secondsGained!.toFixed(1)} seconds faster for that driver.`:available.length?'None of the tested single-call shifts improved that driver’s finish time. Your timing held up against these alternatives.':'No movable calls to compare yet. Try issuing a pit call during your next run.';
   return `<div class="debrief-section"><h3>A benchmark that races back</h3><div class="comparison-table"><table><thead><tr><th>STRATEGY</th><th>THEO</th><th>NICO</th><th>POINTS</th><th>GOALS</th></tr></thead><tbody>${row('Your race',analysis.actual)}${row('Default engineer',analysis.baseline.result)}${row('Best found',analysis.best.result)}</tbody></table></div><p>${esc(analysis.baseline.plan)}</p><div class="lesson"><span class="eyebrow">ONE THING TO TAKE INTO YOUR NEXT RACE</span><p>${esc(lesson)}</p></div></div><div class="debrief-section"><h3>Best strategy found <span>${analysis.candidates} replays tested</span></h3><p class="best-plan">${esc(analysis.best.plan)}</p><small>Ranks by scenario goals, then team points, then combined finish time. Search includes your race, the default engineer, one-stop plans at laps 18–24 with all three compounds at balanced pace, and the call shifts below. This is a bounded, hindsight search, not a proven global optimum.</small></div><div class="debrief-section"><h3>What if you made the call a lap earlier?</h3><p>One call moves at a time, using your original distance/time trace. Other calls keep their original times. Both cars and the field are re-simulated with the same per-car random events.</p>${alternatives.length?`<div class="whatifs">${alternatives.map(a=>`<article class="whatif"><div><b>${a.car===1?'THEO':'NICO'} · ${esc(a.action)}</b><time>${formatTime(a.originalAt)}</time></div><strong>One lap ${a.direction}${a.result?' → P'+a.result.positions[a.car-1]:''}</strong>${a.result?`<p>${Math.abs(a.secondsGained!).toFixed(1)}s ${a.secondsGained!>=0?'faster':'slower'} · Teammate P${a.result.positions[a.car===1?1:0]} · ${a.result.points} team points</p>`:''}<small>${esc(a.note)}</small></article>`).join('')}</div>`:'<p>No calls were recorded. Your next race will unlock per-call alternatives.</p>'}</div>`;
 }
-function reset() {voiceInput.cancel();interruptRadio();race=createRace();convo=newConversation();lastLine=0;thinking=null;comparison=null;analysisWorker?.terminate();analysisWorker=null;analysisProgress='';debrief=false;finishedWall=0;speed=1;accumulator=0;nextTyre[1]='medium';nextTyre[2]='medium';$('#messages').innerHTML='';setSpeed(1);render();showBriefing();}
+function reset() {airedLines.clear();voiceInput.cancel();interruptRadio();race=createRace();convo=newConversation();lastLine=0;thinking=null;comparison=null;analysisWorker?.terminate();analysisWorker=null;analysisProgress='';debrief=false;finishedWall=0;speed=1;accumulator=0;nextTyre[1]='medium';nextTyre[2]='medium';$('#messages').innerHTML='';setSpeed(1);render();showBriefing();}
 function setSpeed(n:number) {speed=n;convo.speed=n;document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach(b=>{b.classList.toggle('active',Number(b.dataset.speed)===n);b.setAttribute('aria-pressed',String(Number(b.dataset.speed)===n));});}
 app.addEventListener('click',e=>{
   const marker=(e.target as Element).closest('[data-map-driver]');
@@ -208,7 +209,7 @@ $('#play').onclick=()=>{if(race.status==='finished'){showDebrief();return;}if(ra
 $('#guide').onclick=()=>{guided=!guided;$('#guide').textContent=guided?'Hints on':'Hints off';$('#hint').hidden=!guided;document.body.classList.toggle('hints-off',!guided);};
 function setAudio(enabled:boolean){voice.enabled=enabled;sound.setEnabled(enabled);$('#sound').textContent=enabled?'Audio on':'Audio off';$('#sound').setAttribute('aria-pressed',String(enabled));if(!enabled)interruptRadio();else voice.unlock();}
 $('#sound').onclick=()=>{setAudio(!voice.enabled);if(voice.enabled)voice.say('Radio check. Pit wall online.','DATA ENGINEER');};
-voice.onStatus=(text,error=false)=>{$('#radio-status').textContent=text;$('#radio-status').classList.toggle('voice-error',error);const button=document.querySelector('#start-session');if(button instanceof HTMLButtonElement&&button.disabled)button.textContent=text;};
+voice.onStatus=(text,error=false)=>{$('#radio-status').textContent=text;$('#radio-status').classList.toggle('voice-error',error);if(error&&voice.enabled&&race.status==='running'){race.status='paused';accumulator=0;}const button=document.querySelector('#start-session');if(button instanceof HTMLButtonElement&&button.disabled)button.textContent=text;};
 $('#radio-preview').onclick=async()=>{
   const button=$<HTMLButtonElement>('#radio-preview');button.disabled=true;
   if(race.status==='running')race.status='paused';
@@ -269,7 +270,7 @@ document.addEventListener('keydown',e=>{
   const option=e.code==='KeyY'?q.options[0]:q.options.length>1?q.options.at(-1):undefined;
   if(option){e.preventDefault();submit(option.reply);}
 });
-voice.onAir=(speaker,text)=>{const question=convo.questions.find(q=>convo.lines.some(l=>l.question===q.id&&l.text===text));if(question)question.deadline=Math.max(question.deadline,race.elapsed+20);onAir=true;showTransmission(speaker,text);sound.setTalking(true);sound.cue('open');$('#transmission-state').textContent='TRANSMITTING';};
+voice.onAir=(speaker,text)=>{const line=[...convo.lines].reverse().find(l=>l.speaker===speaker&&l.text===text&&!airedLines.has(l.id));if(line){airedLines.add(line.id);document.querySelector(`[data-radio-id="${line.id}"]`)?.setAttribute('data-aired','true');}const question=convo.questions.find(q=>convo.lines.some(l=>l.question===q.id&&l.text===text));if(question)question.deadline=Math.max(question.deadline,race.elapsed+20);onAir=true;showTransmission(speaker,text);sound.setTalking(true);sound.cue('open');$('#transmission-state').textContent='TRANSMITTING';};
 voice.onSilent=()=>{onAir=false;sound.setTalking(voice.blocked);sound.cue('close');$('#transmission-state').textContent=thinking?'STAND BY':'RADIO LINK';};
 function showTransmission(speaker:string,text:string){
   if(voice.blocked)return;lastAirTime=performance.now();
@@ -293,16 +294,21 @@ let lastRender=0;
 function frame(now:number) {
   const delta=Math.min((now-lastFrame)/1000,0.25);lastFrame=now;
   if(race.status==='running'&&!briefing) {
-    accumulator+=delta*speed;
+    const effectiveSpeed=voice.pace(speed);
+    if(effectiveSpeed===0)accumulator=0;
+    else accumulator+=delta*effectiveSpeed;
     while(accumulator>=1&&race.status==='running') {
       const previousFlag=race.flag,asked=convo.asked;
       step(race);convo.observe(race);accumulator--;
+      // Offer events immediately, before another accelerated tick can age them out.
+      renderRadio();
       // Flag changes and questions to the player bring the race back to real time.
       if(previousFlag!==race.flag||(convo.asked>asked&&speed>1)){setSpeed(1);accumulator=0;render();break;}
+      if(voice.enabled&&voice.busy){accumulator=0;break;}
     }
   }
   convo.tick(race);
-  if(now-lastRender>200){render();lastRender=now;}
+  if(now-lastRender>200){render();if(race.status==='running'&&voice.enabled&&voice.busy)$('#flag').textContent=voice.buffering?'◌ PREPARING TEAM RADIO':'● TEAM RADIO · 1×';lastRender=now;}
   requestAnimationFrame(frame);
 }
 render();showBriefing();requestAnimationFrame(frame);

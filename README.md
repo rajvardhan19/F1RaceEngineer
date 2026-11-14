@@ -116,3 +116,9 @@ Fixed opening turns and common readbacks ship as Kokoro-generated WAV clips unde
 **Strategy input.** The team brings decisions to you as questions with quick replies: Maya flags the tyre cliff to James, who asks whether to box; James proposes undercuts on rivals with old tyres and covering a rival who stops right behind us. A yes issues the recorded pit call with the recommended compound; a no or silence changes nothing. After two ignored questions James gives advice instead of asking for a while. The safety-car question only offers cars a stop would help.
 
 In simulated full races with an answering player, voiced lines went from 2.0 to 3.7 per race minute, the longest silence from 339 to 77 seconds, and strategist lines from 3 to 14.
+
+### Live-radio delivery
+
+Headset startup now waits for the live voice model, not only the bundled opening clip. During generation, the simulation clock holds and shows **Preparing team radio**. During spoken turns, it advances at 1×; the selected acceleration resumes once the radio is idle. Text-only mode keeps the requested simulation speed. This is a local-model latency accommodation, not hosted real-time speech.
+
+Reports expire against race time, not a 30-second wall-clock cutoff while synthesis is still running. The director prefetches first sentences and renders the next sentence during playback instead of queueing every sentence in several reports at once. Every generated clip is checked for non-silent audio. Playback failures pause the race and remain visible rather than silently continuing with text alone. Player interruptions and genuinely stale race facts are still discarded.

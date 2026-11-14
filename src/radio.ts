@@ -6,11 +6,10 @@ export {voiceProfile} from './radio-profile.ts';
 export interface RadioLine {text:string;speaker:string;priority:number;at:number;ttl:number}
 type Clip={audio:Float32Array;rate:number};
 interface Part {text:string;request?:number;clip?:Promise<Clip>}
-interface Item extends RadioLine {queuedWall:number;parts:Part[]}
+interface Item extends RadioLine {parts:Part[]}
 
-const MAX_QUEUE=4;        // anything further back would be stale by the time it played
+const MAX_QUEUE=12;        // anything further back would be stale by the time it played
 const PREFETCH=2;         // synthesise the next line while the current one plays
-const WALL_LIMIT=30000;   // a paused or throttled tab never plays half-minute-old news
 const CACHE_SIZE=96;
 
 /**
@@ -50,6 +49,9 @@ export class RadioVoice {
   private cache=new Map<string,Clip>();
   /** Something is on air or waiting to be. */
   get busy(){return this.speaking||this.queue.length>0;}
+  /** Hold the race while rendering; do not let accelerated time expire an unheard turn. */
+  get buffering(){return this.busy&&this.source===null;}
+  pace(requested:number){return !this.enabled?requested:this.blocked||this.buffering?0:this.busy?1:requested;}
 
   unlock(){
     if(!this.context)this.context=new AudioContext();
@@ -89,7 +91,7 @@ export class RadioVoice {
     this.remember(this.key('STRATEGIST',text),await this.loadCue('james-opening'));
     this.onStatus('Team radio connected · live reports load on this device');
     // Start loading the live voices now, so the first unscripted line is not stuck behind the download.
-    void this.prepare().catch(()=>{});
+    await this.prepare();
   }
   prepare():Promise<void>{
     this.unlock();
@@ -105,22 +107,24 @@ export class RadioVoice {
     this.cache.delete(key);this.cache.set(key,clip);
     if(this.cache.size>CACHE_SIZE)this.cache.delete(this.cache.keys().next().value!);
   }
-  private stale(item:Item){return this.clock()-item.at>item.ttl||Date.now()-item.queuedWall>WALL_LIMIT;}
+  private stale(item:Item){return this.clock()-item.at>item.ttl;}
   /** Start synthesis for the items that will play soonest, first sentence first. */
   private prefetch(){
-    for(const item of this.queue.slice(0,PREFETCH))for(const part of item.parts){
-      if(part.clip)continue;
-      const key=this.key(item.speaker,part.text),cached=this.cache.get(key);
-      if(cached){part.clip=Promise.resolve(cached);continue;}
-      const generation=this.generation;
-      const cue=radioCue(item.speaker,part.text);
-      const render=()=>this.prepare().then(()=>{
-        if(generation!==this.generation)throw new Error('cancelled');
-        return this.request('speak',part.text,item.speaker,id=>{part.request=id;});
-      });
-      part.clip=(cue?this.loadCue(cue.file).catch(()=>render()):render()).then(clip=>{this.remember(key,clip);return clip;});
-      part.clip.catch(()=>{});
-    }
+    // Only the first sentence of each upcoming turn. Rendering every sentence at once
+    // queued enough work to hit timeouts before later teammates got their first word.
+    for(const item of this.queue.slice(0,PREFETCH))this.renderPart(item,item.parts[0]);
+  }
+  private renderPart(item:Item,part:Part){
+    if(part.clip)return;
+    const key=this.key(item.speaker,part.text),cached=this.cache.get(key);
+    if(cached){part.clip=Promise.resolve(cached);return;}
+    const generation=this.generation,cue=radioCue(item.speaker,part.text);
+    const render=()=>this.prepare().then(()=>{
+      if(generation!==this.generation)throw new Error('cancelled');
+      return this.request('speak',part.text,item.speaker,id=>{part.request=id;});
+    });
+    part.clip=(cue?this.loadCue(cue.file).catch(()=>render()):render()).then(clip=>{this.remember(key,clip);return clip;});
+    part.clip.catch(()=>{});
   }
   private async loadCue(file:string):Promise<Clip>{
     this.unlock();const response=await fetch(`/audio/team/${file}.wav`);if(!response.ok)throw new Error('Radio clip unavailable');
@@ -134,7 +138,7 @@ export class RadioVoice {
     if(!this.enabled||this.blocked)return;
     // A pre-rendered cue covers the whole line; otherwise speak it sentence by sentence.
     const parts=(radioCue(l.speaker,l.text)?[l.text]:sentences(l.text)).map(text=>({text}));
-    const item:Item={...l,queuedWall:Date.now(),parts};
+    const item:Item={...l,parts};
     this.drop(this.queue.filter(i=>this.stale(i)));
     this.queue=this.queue.filter(i=>!this.stale(i));
     this.queue.push(item);
@@ -161,7 +165,7 @@ export class RadioVoice {
     let item=this.queue[0];if(!item)return;
     this.speaking=true;this.current=item;const generation=this.generation;
     try{
-      if(!this.ready)this.onStatus('Preparing team transmission…');
+      this.onStatus(`Preparing ${voiceProfile(item.speaker).short??item.speaker}’s radio · race clock waiting`);
       // Wait for the head's first sentence. If a more urgent line was queued meanwhile, it goes first.
       let clip=await item.parts[0].clip!;
       for(;;){
@@ -183,7 +187,8 @@ export class RadioVoice {
       this.onAir(item.speaker,item.text);this.onStatus('Neural radio · '+voiceProfile(item.speaker).label);
       try{
         for(let i=0;i<item.parts.length;i++){
-          if(i>0)clip=await item.parts[i].clip!;
+          if(i>0){this.renderPart(item,item.parts[i]);clip=await item.parts[i].clip!;}
+          if(i+1<item.parts.length)this.renderPart(item,item.parts[i+1]);
           if(generation!==this.generation)return;
           const buffer=ctx.createBuffer(1,clip.audio.length,clip.rate);buffer.copyToChannel(new Float32Array(clip.audio),0);
           const source=ctx.createBufferSource();source.buffer=buffer;this.source=source;source.connect(high);

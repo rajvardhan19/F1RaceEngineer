@@ -50,6 +50,7 @@ self.onmessage=(event:MessageEvent<{id:number;type:'load'|'speak'|'cancel';text:
       const profile=voiceProfile(speaker);
       const result=await tts.generate(spokenText(text),{voice:profile.voice,speed:profile.rate});
       const audio=Float32Array.from(Array.isArray(result.audio)?result.audio[0]:result.audio);
+      if(!audible(audio))throw new Error('Voice generation returned silent or invalid audio. Try reloading the headset.');
       self.postMessage({id,type:'audio',audio,rate:result.sampling_rate},{transfer:[audio.buffer]});
     }catch(e){self.postMessage({id,type:'error',error:e instanceof Error?e.message:String(e)});}
   });
