@@ -14,5 +14,5 @@ export function voiceProfile(speaker: string): Profile {
   return PROFILES[speaker] ?? { voice: 'am_michael', rate: 1.08, label: speaker, short: speaker, initials: 'PW' };
 }
 export function spokenText(text: string) {
-  return text.replace(/\bLAU\b/g, 'Theo').replace(/\bREY\b/g, 'Nico').replace(/\bP(\d+)\b/g, 'position $1').replace(/(\d+(?:\.\d+)?)s\b/g, '$1 seconds').replace(/↗|→|·/g, ',').replace(/\s+/g, ' ').trim();
+  return text.replace(/\bLAU\b/g, 'Theo').replace(/\bREY\b/g, 'Nico').replace(/\bP(\d+)\b/g, 'position $1').replace(/\b(\d):(\d\d)\b/g, '$1 $2').replace(/(\d+(?:\.\d+)?)s\b/g, '$1 seconds').replace(/↗|→|·/g, ',').replace(/\s+/g, ' ').trim();
 }

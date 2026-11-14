@@ -69,3 +69,20 @@ test('failed synthesis is dropped and the next transmission can play',async()=>{
   worker.reply({id:worker.requests.at(-1).id,type:'audio',audio:new Float32Array(24000),rate:24000});await flush();
   assert.equal(air,1);radio.interrupt();
 });
+test('instant team cues ship with non-empty WAV audio',async()=>{
+  const {readFile}=await import('node:fs/promises');const {RADIO_CUES}=await import('../src/radio-cues.ts');
+  for(const cue of RADIO_CUES){const data=await readFile(new URL(`../public/audio/team/${cue.file}.wav`,import.meta.url));assert.equal(data.toString('ascii',0,4),'RIFF');assert.equal(data.toString('ascii',8,12),'WAVE');assert(data.length>16000,cue.file);}
+});
+test('long lines are spoken sentence by sentence; short acknowledgements stay attached',async()=>{
+  const {sentences}=await import('../src/radio.ts');
+  assert.deepEqual(sentences('Nico, Keller is 1.9 ahead. You’re P5. Keep pushing!'),['Nico, Keller is 1.9 ahead.','You’re P5. Keep pushing!']);
+  assert.deepEqual(sentences('Copy. Box this lap, mediums.'),['Copy. Box this lap, mediums.']);
+  assert.deepEqual(sentences('Gap is 1.2 seconds.'),['Gap is 1.2 seconds.']);
+  assert.deepEqual(sentences('Box this lap, mediums. Copy.'),['Box this lap, mediums. Copy.']);
+  assert.deepEqual(sentences('Engineer, I’d box Theo this lap for mediums. Box him?'),['Engineer, I’d box Theo this lap for mediums. Box him?']);
+});
+test('lap times are spoken as racing engineers say them',()=>{assert.equal(spokenText('Nico, personal best. 1:24.'),'Nico, personal best. 1 24.');});
+test('a silent GPU render is detected so the radio falls back to the CPU voice',async()=>{
+  const {audible}=await import('../src/radio-audio.ts');
+  assert.equal(audible(new Float32Array(24000)),false);assert.equal(audible(new Float32Array(24000).fill(.05)),true);
+});

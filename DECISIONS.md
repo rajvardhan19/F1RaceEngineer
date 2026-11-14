@@ -41,3 +41,11 @@
 - Added a `swap` team-order command to the simulation, recorded and replayable like other calls.
 - Radio staleness is measured in race time, so 15×/60× never voice outdated gaps. Synthesis is prefetched and cancellable.
 - User chose an in-browser model for open conversation. Evaluated Qwen2.5-0.5B, SmolLM2-360M, Qwen3-0.6B and Gemma-3-1B on the real prompt. Model-proposed commands were wrong on 4 of 10 test phrases for Qwen2.5-0.5B and 9 of 10 for SmolLM2, so the model is chat-only. In the browser, Qwen2.5-0.5B looped at q4f16 (half-precision overflow) and drifted off persona at q4 (“time for some rest”); on CPU it took ~10 s per reply. Llama-3.2-1B q4f16 on WebGPU stayed in persona and referenced the facts, at ~1–1.5 s per reply, so it is the team chat model. WebGPU only: a slow, weak reply hurts immersion more than the scripted answer it would replace. Ungrounded numbers are filtered; greedy decoding, no repetition penalty (it pushed the model away from the fact sheet).
+
+## 2026-11-13 — Faster radio, more team input
+
+- The player felt a delay and wanted more from the team. Measured it in Chrome instead of guessing: Kokoro q8 on single-thread WASM rendered ~3× slower than real time (9 s for a 3 s line, 22.6 s for a tyre answer), and 4 of 13 lines went stale unheard. Only pre-rendered cues were instant.
+- Voices render on WebGPU when available (fp32): 0.14–0.41 render-to-speech ratio, 0–3 s to air, nothing dropped. fp16 on WebGPU produced silent audio (checked by transcribing renders with Whisper), so the worker probes audibility at load and falls back to the CPU voice. Accepting a one-time 310 MB download on GPU devices for real-time speech.
+- Speak long lines sentence by sentence; start loading live voices at the briefing.
+- More talk only after speech kept up: chatter is state-grounded (gap trends, personal bests, dirty air, teammate check, field update, lap picture, tyre warm-up, quiet-minute check-in), spaced by max(30, 12×speed) race seconds, never over an open question.
+- Strategy proposals are questions with recorded calls on “yes” only; nothing happens on “no” or silence. James backs off to statements after two ignored questions. Measured (simulated race, answering player): 2.0 → 3.7 voiced lines per race minute; longest silence 339 → 77 s; strategist lines 3 → 14.

@@ -135,3 +135,69 @@ test('an AI follow-up keeps the engineer being addressed',()=>{
   assert.equal(c.hear(r,'James, what do you think?')?.speaker,'STRATEGIST');
   assert.equal(c.hear(r,'why?')?.speaker,'STRATEGIST');
 });
+test('team opens the radio and responds to each other without player prompts',()=>{
+  const {r,c}=race();runUntil(r,c,r=>r.elapsed>=40);
+  const lines=c.lines.filter(l=>l.voice);const speakers=new Set(lines.map(l=>l.speaker));
+  for(const speaker of ['STRATEGIST','LAU','TYRE SPECIALIST','REY','DATA ENGINEER'])assert(speakers.has(speaker as any),speaker);
+  assert(lines.findIndex(l=>l.speaker==='TYRE SPECIALIST')>lines.findIndex(l=>l.speaker==='LAU'));
+  assert(lines.findIndex(l=>l.speaker==='DATA ENGINEER')>lines.findIndex(l=>l.speaker==='REY'));
+  assert.equal(r.decisions.length,0);assert.equal(c.lines.some(l=>l.speaker==='YOU'),false);
+});
+test('crew acknowledges the selected compound, but not a cancelled pit call',()=>{
+  const {r,c}=race();c.hear(r,'Nico box for hards');runUntil(r,c,r=>r.elapsed>=6);
+  assert(c.lines.some(l=>l.speaker==='PIT CREW'&&/Hards on the trolley/.test(l.text)));
+  const other=race();other.c.hear(other.r,'Nico box for hards');other.c.hear(other.r,'Nico stay out');runUntil(other.r,other.c,r=>r.elapsed>=6);
+  assert.equal(other.c.lines.some(l=>l.speaker==='PIT CREW'),false);
+});
+test('team check-ins do not ask a pitting driver to discuss on-track grip',()=>{
+  const {r,c}=race();r.elapsed=7;playerCar(r,1)!.pitRemaining=20;step(r);c.observe(r);
+  assert.equal(c.lines.some(l=>l.speaker==='LAU'&&/Maya/.test(l.text)),false);
+});
+const CHATTER=/a lap out of|picture\.|personal best|Field update|Holding steady|Stay with him|is coming\.|and growing|getting on|Still on the podium\?/;
+test('the tyre engineer flags the cliff to the strategist, who brings you the box decision',()=>{
+  const {r,c}=race();runUntil(r,c,()=>c.questions.some(q=>q.kind==='plan'),3000);
+  const q=c.questions.find(q=>q.kind==='plan')!;assert(q,'James should propose a stop');
+  assert.equal(q.speaker,'STRATEGIST');assert.equal(q.commands![0].action,'pit');
+  const compound=(q.commands![0] as {compound:string}).compound;
+  c.hear(r,'yes');assert.equal(playerCar(r,q.car)!.pitOrder,compound);
+  assert.deepEqual(r.decisions.at(-1)!.command,q.commands![0]);
+});
+test('a declined proposal changes nothing, and an ignored strategist stops asking for a while',()=>{
+  const {r,c}=race();runUntil(r,c,()=>c.questions.some(q=>q.kind==='plan'),3000);
+  const before=r.decisions.length;c.hear(r,'no');assert.equal(r.decisions.length,before);
+  const passive=race();runUntil(passive.r,passive.c,()=>false,6000);
+  assert(passive.c.lines.some(l=>/For the record, I’d box/.test(l.text)),'after ignored questions James advises instead of asking');
+});
+test('gap trends quote the gap the race actually has',()=>{
+  const {r,c}=race();c.hear(r,'box both');
+  let checked=0;
+  for(let i=0;i<4000&&r.status==='running';i++){
+    step(r);const n=c.lines.length;c.observe(r);
+    for(const l of c.lines.slice(n)){
+      const m=l.text.match(/^(Theo|Nico), you’re taking .* out of (\w+)\. ([\d.]+) seconds now/);if(!m)continue;
+      const car=playerCar(r,m[1]==='Theo'?1:2)!;const ahead=r.cars.find(x=>x.name.endsWith(m[2]))!;
+      const gap=(ahead.distance-car.distance)*86.5;assert(Math.abs(gap-Number(m[3]))<0.6,`${l.text} vs ${gap.toFixed(2)}`);checked++;
+    }
+  }
+  assert(checked>0,'expected at least one closing-gap call');
+});
+test('chatter thins out at high simulation speed and never talks over an open question',()=>{
+  const count=(speed:number)=>{const {r,c}=race();c.speed=speed;c.hear(r,'box both');let over=0;
+    for(let i=0;i<1200;i++){step(r);const n=c.lines.length,open=c.questions.length>0;c.observe(r);if(open)over+=c.lines.slice(n).filter(l=>CHATTER.test(l.text)).length;}
+    return {chatter:c.lines.filter(l=>CHATTER.test(l.text)).length,over};};
+  const slow=count(1),fast=count(15);
+  assert(slow.chatter>=6,`expected regular chatter at 1x, got ${slow.chatter}`);
+  assert(fast.chatter<slow.chatter/2,`15x should be sparser (${fast.chatter} vs ${slow.chatter})`);
+  assert.equal(slow.over,0);assert.equal(fast.over,0);
+});
+test('the safety-car question only offers cars a stop would help',()=>{
+  const {r,c}=race();c.hear(r,'Nico box for mediums');runUntil(r,c,r=>r.flag==='safety');
+  const q=c.questions.find(q=>q.kind==='safety');
+  if(q)assert(!q.options.some(o=>/Nico/.test(o.label)),'Nico is on fresh mediums');
+  else assert(c.lines.some(l=>/on good tyres/.test(l.text)));
+});
+test('every pit exit names the driver',()=>{
+  const {r,c}=race();c.hear(r,'box both');runUntil(r,c,()=>false,1000);
+  const exits=c.lines.filter(l=>/Rejoining P|out in P/.test(l.text));assert(exits.length>=2);
+  for(const l of exits)assert.match(l.text,/Theo|Nico/);
+});

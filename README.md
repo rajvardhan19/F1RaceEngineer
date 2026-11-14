@@ -83,7 +83,7 @@ Radio prose lives in `src/conversation.ts`; the simulation only emits structured
 - **Reactions.** On-track passes and losses (rate-limited), rival stops near our cars with whether we gain the place, pit exits with the cost of a slow stop, position milestones once the order has held for eight seconds, last-lap calls, and result reactions to the real position.
 - **Team orders.** `Theo, let Nico through` (or answering the strategist's swap question) issues a recorded `swap` call: the leading car lifts until the teammate is past, or the order lapses.
 
-The radio director voices lines by priority and drops anything stale in race time, so high simulation speeds do not play minutes-old news. It synthesises the next line while the current one plays, cancels queued synthesis when you key the mic, and pre-renders short stock replies while idle. Every role has its own Kokoro voice, including race control and the pit crew.
+The radio director voices lines by priority and drops anything stale in race time, so high simulation speeds do not play minutes-old news. It speaks long lines sentence by sentence (the first sentence airs as soon as it is rendered), synthesises the next line while the current one plays, and cancels queued synthesis when you key the mic. Every role has its own Kokoro voice, including race control and the pit crew.
 
 ### Optional team chat model
 
@@ -96,3 +96,23 @@ The model only answers free-form questions (“Nico, how does the car feel?”, 
 The conversation remembers a missing-car clarification for 30 seconds, retains tyre/strategy topics for “what about Theo?” and “why?”, and repeats a transmission on “say again”. Named answers only resolve that driver's question. Questions about swapping cars do not issue orders. New turns invalidate active and queued AI replies; a failed voice clip is dropped instead of repeatedly retrying a rejected synthesis.
 
 The approved public-release direction is hosted speech and dialogue, subject to a budget decision before enabling providers. See [HOSTED_VOICE_PLAN.md](HOSTED_VOICE_PLAN.md). Local AI remains optional. Numeric output filtering is a heuristic, not comprehensive factual verification.
+
+## Audible team exchanges
+
+The team initiates a staggered opening radio check: James, Theo, Maya, then Nico and Eli. Drivers also initiate a small number of spaced check-ins; engineers respond from current race state. A still-active pit order gets a delayed crew acknowledgement with the selected compound. Cancelled orders and pitting drivers suppress irrelevant follow-ups. No radio exchange changes race commands without the player.
+
+Fixed opening turns and common readbacks ship as Kokoro-generated WAV clips under `public/audio/team`, produced by `scripts/render-radio-cues.mjs`. They play without model inference; dynamic race reports still use the local model. The opening connects using bundled audio rather than waiting on the model download. Live reports remain device-dependent. Headset connection failures remain visible in the briefing instead of silently starting muted. The player gets at least 20 race seconds to answer a still-open question once its voice starts.
+
+## Faster radio and more team input
+
+**Voice latency.** Measured in Chrome, Kokoro q8 on the single-thread WASM runtime renders about three times slower than real time: a three-second line took nine seconds, and a long tyre answer took 22.6 seconds and went stale before it aired. When the browser offers WebGPU, voices now render on the GPU (fp32, a one-time ~310 MB download, cached by the browser): lines rendered 2.5–5× faster than real time and aired 0–3 seconds after they were written, with none dropped in the same run. At load the worker renders a short probe; if the GPU output is silent (as fp16 was in testing) it falls back to the CPU voice. Without WebGPU the CPU voice (88 MB) still works, with the old lag. Live voices now start loading at the briefing, not at the first unscripted line.
+
+**Team chatter.** The team now talks between the big moments, always from race state:
+
+- Eli reports gap trends lap on lap: closing on the car ahead (with a catch estimate), a car closing from behind, or a growing cushion. Drivers answer.
+- Personal-best laps, stuck-in-dirty-air complaints with the strategist's response, drivers asking how their teammate is doing, a mid-race field update, the strategist's “lap picture” every few minutes, tyre warm-up talk after stops and behind the safety car, and a short check-in after a quiet minute.
+- Chatter never talks over an open question, waits for a gap in the radio, and is spaced by `max(30, 12 × speed)` race seconds so high speeds stay readable.
+
+**Strategy input.** The team brings decisions to you as questions with quick replies: Maya flags the tyre cliff to James, who asks whether to box; James proposes undercuts on rivals with old tyres and covering a rival who stops right behind us. A yes issues the recorded pit call with the recommended compound; a no or silence changes nothing. After two ignored questions James gives advice instead of asking for a while. The safety-car question only offers cars a stop would help.
+
+In simulated full races with an answering player, voiced lines went from 2.0 to 3.7 per race minute, the longest silence from 339 to 77 seconds, and strategist lines from 3 to 14.
